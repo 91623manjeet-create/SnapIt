@@ -1,168 +1,140 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
-import {
-  ImageMagick,
-  initializeImageMagick,
-  MagickFormat,
-  MagickGeometry,
-} from "npm:@imagemagick/magick-wasm@0.0.30";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
-const TEMP_BUCKET = "temp-raw-photos";
-const PERMANENT_BUCKET = "permanent-photos";
-const MAX_DIMENSION = 1080;
-const JPEG_QUALITY = 75;
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
-let magickReady: Promise<void> | null = null;
+const TEMP_BUCKET = 'temp-raw-photos'
+const PERMANENT_BUCKET = 'permanent-photos'
+const SUPPORTED_CONTENT_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+])
 
-function ensureMagick(): Promise<void> {
-  if (!magickReady) {
-    magickReady = (async () => {
-      const wasmUrl = import.meta.resolve(
-        "npm:@imagemagick/magick-wasm@0.0.30/dist/magick.wasm",
-      );
-      const wasmBytes = await Deno.readFile(new URL(wasmUrl, import.meta.url));
-      await initializeImageMagick(wasmBytes);
-    })();
+function getRoomIdFromPath(path: string): string | null {
+  const parts = path.split('/').filter(Boolean)
+  return parts.length > 1 ? parts[0] : null
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
   }
-  return magickReady;
-}
 
-interface StorageRecord {
-  bucket_id: string;
-  name: string;
-  metadata?: Record<string, string>;
-}
-
-interface WebhookPayload {
-  type?: string;
-  record?: StorageRecord;
-  bucket_id?: string;
-  name?: string;
-  metadata?: Record<string, string>;
-}
-
-function extractRecord(payload: WebhookPayload): StorageRecord | null {
-  if (payload.record?.bucket_id && payload.record?.name) {
-    return payload.record;
-  }
-  if (payload.bucket_id && payload.name) {
-    return {
-      bucket_id: payload.bucket_id,
-      name: payload.name,
-      metadata: payload.metadata,
-    };
-  }
-  return null;
-}
-
-async function compressImage(rawBytes: Uint8Array): Promise<Uint8Array> {
-  await ensureMagick();
-
-  return ImageMagick.read(rawBytes, (img) => {
-    const width = img.width;
-    const height = img.height;
-
-    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-      const geometry = new MagickGeometry(MAX_DIMENSION, MAX_DIMENSION);
-      geometry.ignoreAspectRatio = false;
-      img.resize(geometry);
-    }
-
-    img.quality = JPEG_QUALITY;
-    return img.write(MagickFormat.Jpeg, (data) => data);
-  });
-}
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, content-type",
-      },
-    });
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const webhookBody = await req.json()
+    console.log("Webhook body payload details:", webhookBody)
 
-    const payload: WebhookPayload = await req.json();
-    const record = extractRecord(payload);
-
-    if (!record || record.bucket_id !== TEMP_BUCKET) {
-      return new Response(
-        JSON.stringify({ error: "Not a temp-raw-photos upload" }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
-      );
+    const fileRecord = webhookBody?.record ?? webhookBody
+    if (!fileRecord) {
+      return new Response(JSON.stringify({ error: "Missing record context" }), { status: 400 })
     }
 
-    const rawPath = record.name;
-    const pathParts = rawPath.split("/");
-    const roomId = pathParts[0];
-    const uploaderName = record.metadata?.uploader_name ?? "Anonymous";
+    const bucketId = fileRecord.bucket_id
+    const filePathName = fileRecord.name
+    if (!bucketId || !filePathName) {
+      return new Response(JSON.stringify({ error: "Missing bucket or file path" }), { status: 400 })
+    }
+
+    if (bucketId !== TEMP_BUCKET) {
+      return new Response(JSON.stringify({ ok: true, skipped: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      })
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(JSON.stringify({ error: 'Missing Supabase function environment variables' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      })
+    }
+
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } })
+
+    const { data: fileBlob, error: downloadError } = await supabaseAdmin
+      .storage
+      .from(bucketId)
+      .download(filePathName)
+
+    if (downloadError || !fileBlob) {
+      throw new Error(`Failed downloading source file: ${downloadError?.message ?? 'Unknown download error'}`)
+    }
+
+    const contentType =
+      fileBlob.type ||
+      fileRecord.metadata?.mimetype ||
+      fileRecord.metadata?.contentType ||
+      'image/jpeg'
+
+    if (!SUPPORTED_CONTENT_TYPES.has(contentType)) {
+      return new Response(JSON.stringify({
+        error: `Unsupported image type: ${contentType}. Please upload JPG, PNG, or WebP images.`,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    const roomId =
+      fileRecord.metadata?.room_id ??
+      getRoomIdFromPath(filePathName) ??
+      null
+    const uploaderName = fileRecord.metadata?.uploader_name ?? 'Guest User'
 
     if (!roomId) {
-      return new Response(JSON.stringify({ error: "Missing room_id in path" }), {
+      return new Response(JSON.stringify({ error: 'Missing room ID metadata' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      })
     }
 
-    const { data: rawFile, error: downloadError } = await supabase.storage
-      .from(TEMP_BUCKET)
-      .download(rawPath);
-
-    if (downloadError || !rawFile) {
-      throw new Error(`Download failed: ${downloadError?.message}`);
-    }
-
-    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
-    const compressedBytes = await compressImage(rawBytes);
-
-    const fileId = crypto.randomUUID();
-    const permanentPath = `${roomId}/${fileId}.jpg`;
-
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await supabaseAdmin
+      .storage
       .from(PERMANENT_BUCKET)
-      .upload(permanentPath, compressedBytes, {
-        contentType: "image/jpeg",
-        cacheControl: "31536000",
-        upsert: false,
-      });
+      .upload(filePathName, fileBlob, {
+        contentType: contentType,
+        upsert: true
+      })
 
-    if (uploadError) {
-      throw new Error(`Permanent upload failed: ${uploadError.message}`);
-    }
+    if (uploadError) throw uploadError
 
-    const { error: insertError } = await supabase.from("photos").insert({
-      room_id: roomId,
-      uploader_name: uploaderName,
-      storage_path: permanentPath,
-    });
+    const { error: dbInsertError } = await supabaseAdmin
+      .from('photos')
+      .insert({
+        room_id: roomId,
+        uploader_name: uploaderName,
+        storage_path: filePathName,
+      })
 
-    if (insertError) {
-      await supabase.storage.from(PERMANENT_BUCKET).remove([permanentPath]);
-      throw new Error(`DB insert failed: ${insertError.message}`);
-    }
+    if (dbInsertError) throw dbInsertError
 
-    await supabase.storage.from(TEMP_BUCKET).remove([rawPath]);
+    await supabaseAdmin.storage.from(bucketId).remove([filePathName])
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        storage_path: permanentPath,
-        compressed_size: compressedBytes.byteLength,
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
+
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("compress-photo error:", message);
+    const message = err instanceof Error ? err.message : 'Unknown edge function error'
+    console.error("Critical Runtime Blocker:", message)
     return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500, // Return a 500 error instead of a 400 if a script error occurs
+    })
   }
-});
+})

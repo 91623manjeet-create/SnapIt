@@ -85,7 +85,7 @@ export function CameraUI({ roomId, onToast }: CameraUIProps) {
         <input
           ref={inputRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           capture="environment"
           id="camera-input"
           className="sr-only"

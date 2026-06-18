@@ -1,9 +1,6 @@
 # Snap It — Supabase local config
 # See: https://supabase.com/docs/guides/cli/config
 
-[project]
-id = "snap-it"
-
 [api]
 enabled = true
 port = 54321

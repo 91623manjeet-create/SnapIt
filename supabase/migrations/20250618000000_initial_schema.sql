@@ -54,7 +54,7 @@ CREATE POLICY "Photos visible after reveal"
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES
   ('temp-raw-photos', 'temp-raw-photos', false, 52428800, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']),
-  ('permanent-photos', 'permanent-photos', true, 10485760, ARRAY['image/jpeg'])
+  ('permanent-photos', 'permanent-photos', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp'])
 ON CONFLICT (id) DO NOTHING;
 
 -- ─── Storage Policies: temp-raw-photos (anon upload) ─────────────────────────
