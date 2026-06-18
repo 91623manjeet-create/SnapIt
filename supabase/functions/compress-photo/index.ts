@@ -21,10 +21,8 @@ serve(async (req) => {
 
     const bucketId = fileRecord.bucket_id
     const filePathName = fileRecord.name 
-
-    // Extract room UUID from path (e.g., "room-uuid/photo.jpg" -> "room-uuid")
-    const pathSegments = filePathName.split('/')
-    const dynamicRoomId = pathSegments[0]
+    const mimeType = fileRecord.metadata?.mimetype || 'image/jpeg'
+    const uploaderName = fileRecord.metadata?.uploader_name || 'Guest User'
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -32,38 +30,53 @@ serve(async (req) => {
       { auth: { persistSession: false } }
     )
 
-    // 1. Download raw file
+    const pathSegments = filePathName.split('/')
+    let roomUUID = pathSegments[0]
+    const justTheFileName = pathSegments[pathSegments.length - 1]
+
+    if (pathSegments.length === 1 || roomUUID.length < 10) {
+      const { data: firstRoom } = await supabaseAdmin.from('rooms').select('id').limit(1).single()
+      if (firstRoom) {
+        roomUUID = firstRoom.id
+      } else {
+        throw new Error("No rooms exist in the database.")
+      }
+    }
+
+    // 1. Download the raw file from the temporary upload bucket
     const { data: fileBlob, error: downloadError } = await supabaseAdmin
       .storage
       .from(bucketId)
       .download(filePathName)
 
-    if (downloadError || !fileBlob) throw new Error("Storage download failed")
+    if (downloadError || !fileBlob) {
+      throw new Error(`Download failed: ${downloadError?.message}`)
+    }
 
-    // 2. Upload to permanent bucket
+    // 2. Upload FLAT to the root of permanent-photos (No room folder prefix!)
     const { error: uploadError } = await supabaseAdmin
       .storage
       .from('permanent-photos')
-      .upload(filePathName, fileBlob, {
-        contentType: 'image/jpeg',
+      .upload(justTheFileName, fileBlob, { // 👈 Changed filePathName to justTheFileName
+        contentType: mimeType,
         upsert: true
       })
 
-    if (uploadError) throw uploadError
+    if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
 
-    // 3. Remove raw file from temp bucket
+    // 3. Clean up the source raw file from the temporary bucket
     await supabaseAdmin.storage.from(bucketId).remove([filePathName])
 
-    // 4. Save metadata row into the photos table dynamically
+    // 4. Save metadata row cleanly into your database photos table
     const { error: dbInsertError } = await supabaseAdmin
       .from('photos')
       .insert({
-        storage_path: filePathName,
-        uploader_name: 'Guest User',
-        room_id: dynamicRoomId // Extracted dynamically!
+        storage_path: justTheFileName, 
+        uploader_name: uploaderName,   
+        room_id: roomUUID
       })
 
-    if (dbInsertError) throw dbInsertError
+    if (dbInsertError) throw new Error(`Database save failed: ${dbInsertError.message}`)
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -71,7 +84,7 @@ serve(async (req) => {
     })
 
   } catch (err) {
-    console.error("Runtime Error:", err.message)
+    console.error("Pipeline Error:", err.message)
     return new Response(JSON.stringify({ error: err.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,

@@ -12,6 +12,7 @@ import { Toast, type ToastStatus } from '@/components/Toast'
 import { GlassCard } from '@/components/GlassCard'
 import { useCountdown } from '@/hooks/useCountdown'
 import { usePhotos } from '@/hooks/usePhotos'
+import type { Photo } from '@/hooks/usePhotos'
 import { useRoom } from '@/hooks/useRoom'
 import { getRoomIdFromUrl } from '@/lib/supabase'
 
@@ -24,10 +25,11 @@ export default function App() {
   const roomId = getRoomIdFromUrl() ?? import.meta.env.VITE_ROOM_ID ?? null
   const { room, loading: roomLoading, error: roomError } = useRoom(roomId)
   const countdown = useCountdown(room?.reveal_at)
-  const { photos, loading: photosLoading } = usePhotos(roomId, countdown.isUnlocked)
+  const { photos, loading: photosLoading, fetchPreview } = usePhotos(roomId, countdown.isUnlocked)
 
   const [peekOpen, setPeekOpen] = useState(false)
   const [peekNote, setPeekNote] = useState('')
+  const [previewPhotos, setPreviewPhotos] = useState<Photo[]>([])
   const [toast, setToast] = useState<ToastState | null>(null)
 
   const handleToast = useCallback((message: string, status: ToastStatus) => {
@@ -36,8 +38,10 @@ export default function App() {
 
   const dismissToast = useCallback(() => setToast(null), [])
 
-  const handlePeek = () => {
+  const handlePeek = async () => {
     setPeekNote(getRandomPeekNote())
+    const result = await fetchPreview()
+    setPreviewPhotos(result)
     setPeekOpen(true)
   }
 
@@ -135,7 +139,7 @@ export default function App() {
 
       <FooterGreeting />
 
-      <PeekModal isOpen={peekOpen} onClose={() => setPeekOpen(false)} note={peekNote} />
+      <PeekModal isOpen={peekOpen} onClose={() => setPeekOpen(false)} note={peekNote} previewPhotos={previewPhotos} />
 
       {toast && (
         <Toast message={toast.message} status={toast.status} onDismiss={dismissToast} />

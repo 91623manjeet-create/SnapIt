@@ -15,38 +15,48 @@ export function usePhotos(roomId: string | null, enabled: boolean) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchPhotos = useCallback(async () => {
-    if (!roomId || !enabled) return
+  const fetchPhotos = useCallback(async (previewMode = false): Promise<Photo[]> => {
+    if (!roomId) return []
 
     setLoading(true)
     setError(null)
 
-    const { data, error: fetchError } = await supabase
+    let query = supabase
       .from('photos')
       .select('id, room_id, uploader_name, storage_path, created_at')
       .eq('room_id', roomId)
       .order('created_at', { ascending: false })
 
+    if (previewMode) {
+      query = query.limit(6)
+    }
+
+    const { data, error: fetchError } = await query
+
     if (fetchError) {
       setError(fetchError.message)
       setPhotos([])
-    } else {
-      setPhotos(
-        (data ?? []).map((photo: Omit<Photo, 'url'>) => ({
-          ...photo,
-          url: getPublicPhotoUrl(photo.storage_path),
-        })),
-      )
+      setLoading(false)
+      return []
     }
-    setLoading(false)
-  }, [roomId, enabled])
 
-  useEffect(() => {
-    fetchPhotos()
-  }, [fetchPhotos])
+    const mapped: Photo[] = (data ?? []).map((photo: Omit<Photo, 'url'>) => ({
+      ...photo,
+      url: getPublicPhotoUrl(photo.storage_path),
+    }))
+
+    setPhotos(mapped)
+    setLoading(false)
+    return mapped
+  }, [roomId])
 
   useEffect(() => {
     if (!roomId || !enabled) return
+    fetchPhotos()
+  }, [roomId, enabled, fetchPhotos])
+
+  useEffect(() => {
+    if (!roomId) return
 
     const channel = supabase
       .channel(`photos:${roomId}`)
@@ -59,7 +69,7 @@ export function usePhotos(roomId: string | null, enabled: boolean) {
           filter: `room_id=eq.${roomId}`,
         },
         () => {
-          fetchPhotos()
+          if (enabled) fetchPhotos()
         },
       )
       .subscribe()
@@ -69,5 +79,5 @@ export function usePhotos(roomId: string | null, enabled: boolean) {
     }
   }, [roomId, enabled, fetchPhotos])
 
-  return { photos, loading, error, refetch: fetchPhotos }
+  return { photos, loading, error, refetch: () => fetchPhotos(), fetchPreview: () => fetchPhotos(true) }
 }

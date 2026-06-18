@@ -37,17 +37,11 @@ CREATE POLICY "Anyone can insert photos"
   TO anon, authenticated
   WITH CHECK (true);
 
--- Photos visible only after room reveal_at has passed
-CREATE POLICY "Photos visible after reveal"
+-- Photos are readable at any time (client gates the gallery UI, and peek previews need access)
+CREATE POLICY "Anyone can view photos"
   ON public.photos FOR SELECT
   TO anon, authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.rooms
-      WHERE rooms.id = photos.room_id
-        AND NOW() >= rooms.reveal_at
-    )
-  );
+  USING (true);
 
 -- ─── Storage Buckets ──────────────────────────────────────────────────────────
 
