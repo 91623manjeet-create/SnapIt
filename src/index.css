@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --color-snap-coral: #ff6b6b;
+  --color-snap-peach: #ffa07a;
+  --color-snap-gold: #ffd93d;
+  --color-snap-lavender: #c084fc;
+  --color-snap-rose: #f472b6;
+  --color-snap-deep: #1a0a2e;
+  --color-snap-mid: #2d1b4e;
+}
+
+@layer base {
+  html {
+    @apply antialiased scroll-smooth;
+  }
+
+  body {
+    @apply min-h-dvh font-sans text-white overflow-x-hidden;
+    background-color: var(--color-snap-deep);
+  }
+
+  #root {
+    @apply min-h-dvh;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-md bg-white/10 border border-white/20 shadow-xl;
+  }
+
+  .glass-strong {
+    @apply backdrop-blur-xl bg-white/15 border border-white/25 shadow-2xl;
+  }
+
+  .text-glow {
+    text-shadow:
+      0 0 20px rgba(244, 114, 182, 0.6),
+      0 0 40px rgba(192, 132, 252, 0.4),
+      0 0 60px rgba(255, 107, 107, 0.2);
+  }
+
+  .mesh-gradient {
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 40%, rgba(255, 107, 107, 0.35) 0%, transparent 50%),
+      radial-gradient(ellipse 60% 40% at 80% 20%, rgba(192, 132, 252, 0.4) 0%, transparent 50%),
+      radial-gradient(ellipse 50% 60% at 60% 80%, rgba(255, 160, 122, 0.3) 0%, transparent 50%),
+      radial-gradient(ellipse 40% 40% at 10% 90%, rgba(255, 217, 61, 0.2) 0%, transparent 50%),
+      linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 40%, #1a0a2e 100%);
+  }
+}

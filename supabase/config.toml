@@ -1,0 +1,27 @@
+# Snap It — Supabase local config
+# See: https://supabase.com/docs/guides/cli/config
+
+[project]
+id = "snap-it"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[functions.compress-photo]
+verify_jwt = false
